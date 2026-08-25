@@ -43,7 +43,7 @@ int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
             if (plainMmMessage)
             {
                 regRequest = dynamic_cast<nas::RegistrationRequest *>(plainMmMessage);
-                if (regRequest)
+                if (regRequest && regRequest->requestedNSSAI.has_value())
                 {
                     auto sz = regRequest->requestedNSSAI->sNssais.size();
                     if (sz > 0) {
@@ -53,12 +53,22 @@ int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
             }
         }
     }
-    if (regRequest && regRequest->requestedNSSAI) 
-        regRequest->requestedNSSAI = std::nullopt;  
+    // Re-encode only when the PDU was actually changed. Every Initial NAS message used
+    // to be decoded and re-encoded here, including integrity-protected ones: a Service
+    // Request answering a Paging carries a MAC, a decode/re-encode round trip is not
+    // byte-exact, and the AMF then reports "NAS MAC verification failed", finds no
+    // usable security context, and answers Service Reject -- which deregisters the UE.
+    // A plain initial Registration Request has no MAC, which is why registration
+    // survived this and mobile-terminated reachability did not.
+    if (regRequest && regRequest->requestedNSSAI.has_value())
+    {
+        regRequest->requestedNSSAI = std::nullopt;
 
-    OctetString modifiedNasPdu;
-    nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
-    nasPdu = std::move(modifiedNasPdu);
+        OctetString modifiedNasPdu;
+        nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
+        nasPdu = std::move(modifiedNasPdu);
+    }
+
     return requestedSliceType;
 }
 
@@ -75,7 +85,7 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
         return;
     }
 
-    createUeContext(ueId, requestedSliceType);
+    createUeContext(ueId, requestedSliceType, sTmsi);
 
     auto *ueCtx = findUeContext(ueId);
     if (ueCtx == nullptr)
