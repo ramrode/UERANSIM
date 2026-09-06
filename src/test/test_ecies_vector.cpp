@@ -43,8 +43,17 @@ void run_ecies_profile_b_vector_test()
     // Verified against free5GC reference implementation (identical ephemeral pub key derivation,
     // matching keystream via XOR cross-check with MSIN "001002086" test case).
     // Expected: compressedEphPub(33 bytes) || ciphertext(5 bytes) || macTag(8 bytes)
-    const std::string expectedOutput = "039aab8376597021e855679a9778ea0b67396e68c66df32c0f41e9acca2da9b9d1"
-                                       "46a21f4297e43b1f2f7cff7936";
+    // Upper case, because that is what OctetString::toHexString() produces for both profiles.
+    const std::string expectedOutput = "039AAB8376597021E855679A9778EA0B67396E68C66DF32C0F41E9ACCA2DA9B9D1"
+                                       "46A21F4297E43B1F2F7CFF7936";
 
     TEST_ASSERT_EQ(result, expectedOutput);
+
+    // The same home network key in compressed form must yield the identical scheme output.
+    // This is the only positive test for the uECC_decompress path.
+    const std::string hnPubKeyCompressedHex = "0272DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD1";
+    OctetString hnPubKeyCompressed = OctetString::FromHex(hnPubKeyCompressedHex);
+
+    std::string compressedResult = eciesProfileB(plaintextMsin, hnPubKeyCompressed, ephPrivKey);
+    TEST_ASSERT_EQ(compressedResult, expectedOutput);
 }

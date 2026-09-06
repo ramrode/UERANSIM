@@ -12,8 +12,8 @@
 #include <cstdlib>
 #include <string>
 
-static int g_testsPassed = 0;
-static int g_testsFailed = 0;
+inline int g_testsPassed = 0;
+inline int g_testsFailed = 0;
 
 #define TEST_ASSERT(cond, msg)                                                                                         \
     do                                                                                                                 \

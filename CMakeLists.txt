@@ -53,10 +53,19 @@ target_compile_options(nr-cli PRIVATE -Wall -Wextra -pedantic)
 target_link_libraries(nr-cli common-lib)
 
 #################### TEST EXECUTABLE ####################
-file(GLOB_RECURSE TEST_SRC_FILES src/test/*.cpp)
-add_executable(nr-tests ${TEST_SRC_FILES})
-target_link_libraries(nr-tests pthread)
-target_compile_options(nr-tests PRIVATE -Wall -Wextra -pedantic)
-target_link_libraries(nr-tests common-lib)
-target_link_libraries(nr-tests ue)
-target_link_libraries(nr-tests ext)
+# Built by default so the tests cannot rot, but it is not part of what `make build` installs.
+option(BUILD_TESTS "Build the nr-tests executable" ON)
+
+if (BUILD_TESTS)
+    # CONFIGURE_DEPENDS so that adding a test file re-runs cmake instead of silently skipping it.
+    file(GLOB_RECURSE TEST_SRC_FILES CONFIGURE_DEPENDS src/test/*.cpp)
+    add_executable(nr-tests ${TEST_SRC_FILES})
+    target_link_libraries(nr-tests pthread)
+    target_compile_options(nr-tests PRIVATE -Wall -Wextra -pedantic)
+    target_link_libraries(nr-tests common-lib)
+    target_link_libraries(nr-tests ue)
+    target_link_libraries(nr-tests ext)
+
+    enable_testing()
+    add_test(NAME nr-tests COMMAND nr-tests)
+endif ()

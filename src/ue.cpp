@@ -156,26 +156,23 @@ static nr::ue::UeConfig *ReadConfigYaml()
         result->homeNetworkPublicKeyId = yaml::GetInt32(config, "homeNetworkPublicKeyId", 0, 255);
     if (yaml::HasField(config, "homeNetworkPublicKey"))
     {
-        int scheme = result->protectionScheme;
-        if (scheme == 1)
+        if (result->protectionScheme == 2)
         {
-            result->homeNetworkPublicKey =
-                OctetString::FromHex(yaml::GetString(config, "homeNetworkPublicKey", 64, 64));
-        }
-        else if (scheme == 2)
-        {
-            std::string keyHex = yaml::GetString(config, "homeNetworkPublicKey", 66, 130);
-            size_t hexLen = keyHex.size();
-            if (hexLen != 66 && hexLen != 130)
+            // Profile B: a secp256r1 point, either compressed (33 bytes) or uncompressed (65 bytes)
+            // Checked here rather than through GetString's min/max so that every wrong length
+            // gets the explanatory message instead of a bare "too small"/"too large".
+            std::string keyHex = yaml::GetString(config, "homeNetworkPublicKey");
+            if (keyHex.size() != 66 && keyHex.size() != 130)
             {
-                throw std::runtime_error("Profile B homeNetworkPublicKey must be exactly 66 (compressed) or 130 "
-                                         "(uncompressed) hex chars, got " +
-                                         std::to_string(hexLen));
+                throw std::runtime_error("homeNetworkPublicKey must be 66 (compressed) or 130 (uncompressed) hex "
+                                         "characters when protectionScheme is 2, got " +
+                                         std::to_string(keyHex.size()));
             }
             result->homeNetworkPublicKey = OctetString::FromHex(keyHex);
         }
         else
         {
+            // Profile A: a 32 byte X25519 public key
             result->homeNetworkPublicKey =
                 OctetString::FromHex(yaml::GetString(config, "homeNetworkPublicKey", 64, 64));
         }

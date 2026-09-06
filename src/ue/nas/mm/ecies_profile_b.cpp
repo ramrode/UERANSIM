@@ -8,8 +8,6 @@
 
 #include "ecies_profile_b.hpp"
 
-#include <algorithm>
-#include <cmath>
 #include <cstring>
 #include <utils/octet_string.hpp>
 
@@ -18,35 +16,30 @@ extern "C"
 #include <ext/crypt-ext/aes.h>
 #include <ext/crypt-ext/hmac-sha256.h>
 #include <ext/crypt-ext/sha256.h>
+#include <ext/crypt-ext/x963kdf.h>
 #include <ext/micro-ecc/uECC.h>
 }
 
-// ANSI-X9.63 KDF with variable-length sharedInfo (the vendored x963kdf hardcodes 32).
-static void x963kdf_profileB(uint8_t *output, const uint8_t *sharedSecret, size_t sharedSecretLen,
-                             const uint8_t *sharedInfo, size_t sharedInfoLen, size_t keySize)
+// Order of the secp256r1 group (big-endian).
+static const uint8_t SECP256R1_ORDER[32] = {0xFF, 0xFF, 0xFF, 0xFF, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF,
+                                            0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xBC, 0xE6, 0xFA, 0xAD, 0xA7, 0x17,
+                                            0x9E, 0x84, 0xF3, 0xB9, 0xCA, 0xC2, 0xFC, 0x63, 0x25, 0x51};
+
+bool isValidProfileBPrivateKey(const OctetString &privKey)
 {
-    size_t maxCount = static_cast<size_t>(std::ceil(static_cast<double>(keySize) / SHA256_DIGEST_SIZE));
-    uint8_t counterBuf[4];
+    if (privKey.length() != 32)
+        return false;
 
-    for (size_t count = 1; count <= maxCount; count++)
+    // Both operands are big-endian, so memcmp is an unsigned numeric comparison.
+    if (std::memcmp(privKey.data(), SECP256R1_ORDER, 32) >= 0)
+        return false;
+
+    for (int i = 0; i < 32; i++)
     {
-        sha256_t ss;
-        uint8_t hash[SHA256_DIGEST_SIZE];
-
-        sha256_init(&ss);
-        sha256_update(&ss, sharedSecret, sharedSecretLen);
-        counterBuf[0] = static_cast<uint8_t>((count >> 24) & 0xff);
-        counterBuf[1] = static_cast<uint8_t>((count >> 16) & 0xff);
-        counterBuf[2] = static_cast<uint8_t>((count >> 8) & 0xff);
-        counterBuf[3] = static_cast<uint8_t>((count) & 0xff);
-        sha256_update(&ss, counterBuf, 4);
-        sha256_update(&ss, sharedInfo, sharedInfoLen);
-        sha256_final(&ss, hash);
-
-        size_t offset = (count - 1) * SHA256_DIGEST_SIZE;
-        size_t toCopy = (offset + SHA256_DIGEST_SIZE <= keySize) ? SHA256_DIGEST_SIZE : (keySize - offset);
-        std::memcpy(output + offset, hash, toCopy);
+        if (privKey.data()[i] != 0)
+            return true;
     }
+    return false;
 }
 
 std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &hnPublicKey,
@@ -55,6 +48,7 @@ std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &h
     uECC_Curve curve = uECC_secp256r1();
 
     // --- 1. Normalize hnPublicKey to 64-byte native (X||Y) ---
+    // Only the two encodings the config accepts: compressed (33) and uncompressed (65).
     uint8_t hnNative64[64];
     int hnLen = hnPublicKey.length();
 
@@ -64,9 +58,6 @@ std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &h
         if (prefix != 0x02 && prefix != 0x03)
             return {};
         uECC_decompress(hnPublicKey.data(), hnNative64, curve);
-        // Verify the decompressed point is valid
-        if (!uECC_valid_public_key(hnNative64, curve))
-            return {};
     }
     else if (hnLen == 65)
     {
@@ -74,14 +65,16 @@ std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &h
             return {};
         std::memcpy(hnNative64, hnPublicKey.data() + 1, 64);
     }
-    else if (hnLen == 64)
-    {
-        std::memcpy(hnNative64, hnPublicKey.data(), 64);
-    }
     else
     {
         return {};
     }
+
+    // uECC_shared_secret does not validate the peer point, and uECC_decompress returns garbage
+    // for an x that is not on the curve. Validate every input form here, otherwise a mistyped
+    // key would yield a well-formed SUCI that the home network cannot decrypt.
+    if (!uECC_valid_public_key(hnNative64, curve))
+        return {};
 
     // --- 2. Derive ephemeral PUBLIC key ---
     if (ephemeralPrivKey.length() != 32)
@@ -101,7 +94,7 @@ std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &h
 
     // --- 4. KDF: X9.63 KDF with sharedInfo = compressedEphPub (33 bytes) ---
     uint8_t derivedKey[64];
-    x963kdf_profileB(derivedKey, sharedX, 32, compressedEphPub, 33, 64);
+    x963kdf_ex(derivedKey, sharedX, sizeof(sharedX), compressedEphPub, sizeof(compressedEphPub), sizeof(derivedKey));
 
     uint8_t *aesKey = derivedKey;      // [0, 16)
     uint8_t *iv = derivedKey + 16;     // [16, 32)
@@ -128,7 +121,5 @@ std::string eciesProfileB(const OctetString &plaintextMsin, const OctetString &h
     output.append(OctetString::FromArray(ciphertext.data(), static_cast<size_t>(msinLen)));
     output.append(OctetString::FromArray(macTag, 8));
 
-    std::string hex = output.toHexString();
-    std::transform(hex.begin(), hex.end(), hex.begin(), ::tolower);
-    return hex;
+    return output.toHexString();
 }
