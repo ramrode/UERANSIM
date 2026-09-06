@@ -19,6 +19,14 @@ build: FORCE
 
 	@printf "${GREEN}UERANSIM successfully built.${NC}\n"
 
+test: FORCE
+	cmake -DCMAKE_BUILD_TYPE=Release -G "CodeBlocks - Unix Makefiles" . -B cmake-build-release
+	cmake --build cmake-build-release --target nr-tests
+	
+	cd cmake-build-release && ctest --output-on-failure
+
+	@printf "${GREEN}All tests passed.${NC}\n"
+
 FORCE:
 
 clean:

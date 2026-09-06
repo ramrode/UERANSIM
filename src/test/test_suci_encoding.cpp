@@ -11,7 +11,7 @@
 #include <lib/nas/ie6.hpp>
 #include <utils/octet_string.hpp>
 
-void run_regression_tests()
+void run_suci_encoding_tests()
 {
     // --- Test 1: Encoder length for Profile B SUCI IE ---
     // Construct a SUCI IE with Profile B (scheme 2) using the §C.4 expected schemeOutput.
@@ -47,7 +47,7 @@ void run_regression_tests()
 
         TEST_ASSERT_EQ(lowerEncoded.length(), encoded.length());
         TEST_ASSERT(std::memcmp(encoded.data(), lowerEncoded.data(), static_cast<size_t>(encoded.length())) == 0,
-                    "regression: scheme output hex case does not change the encoded bytes");
+                    "encoding: scheme output hex case does not change the encoded bytes");
     }
 
     // --- Test 2: Profile A structural — output hex length and scheme id ---

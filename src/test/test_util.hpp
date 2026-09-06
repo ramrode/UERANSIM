@@ -10,10 +10,21 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <sstream>
 #include <string>
 
 inline int g_testsPassed = 0;
 inline int g_testsFailed = 0;
+
+// Renders a value for the failure output, so a failing comparison shows what it actually got
+// instead of only the expressions. Operands of TEST_ASSERT_EQ have to be streamable.
+template <typename T>
+inline std::string test_to_string(const T &value)
+{
+    std::ostringstream ss;
+    ss << value;
+    return ss.str();
+}
 
 #define TEST_ASSERT(cond, msg)                                                                                         \
     do                                                                                                                 \
@@ -43,7 +54,8 @@ inline int g_testsFailed = 0;
         else                                                                                                           \
         {                                                                                                              \
             g_testsFailed++;                                                                                           \
-            std::printf("  FAIL: %s == %s  [%s:%d]\n", #a, #b, __FILE__, __LINE__);                                    \
+            std::printf("  FAIL: %s == %s  [%s:%d]\n         actual:   %s\n         expected: %s\n", #a, #b,           \
+                        __FILE__, __LINE__, test_to_string(_a).c_str(), test_to_string(_b).c_str());                   \
         }                                                                                                              \
     } while (0)
 
