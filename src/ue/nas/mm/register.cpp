@@ -728,7 +728,11 @@ void NasMm::receiveInitialRegistrationReject(const nas::RegistrationReject &msg)
         {
             if (msg.t3346value.has_value() && nas::utils::HasValue(*msg.t3346value))
             {
+                // "The UE shall abort the initial registration procedure, set the 5GS update status to 5U2 NOT
+                // UPDATED, reset the registration attempt counter and enter state
+                // 5GMM-DEREGISTERED.ATTEMPTING-REGISTRATION."
                 switchUState(E5UState::U2_NOT_UPDATED);
+                resetRegAttemptCounter();
                 switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
 
                 m_timers->t3346.stop();
@@ -896,7 +900,11 @@ void NasMm::receiveMobilityRegistrationReject(const nas::RegistrationReject &msg
         {
             if (!hasEmergency())
             {
+                // "If the rejected request was not for initiating an emergency PDU session, the UE shall set the
+                // 5GS update status to 5U2 NOT UPDATED, reset the registration attempt counter and change to
+                // state 5GMM-REGISTERED.ATTEMPTING-REGISTRATION-UPDATE."
                 switchUState(E5UState::U2_NOT_UPDATED);
+                resetRegAttemptCounter();
                 switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
             }
 
