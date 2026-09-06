@@ -905,7 +905,7 @@ void NasMm::receiveMobilityRegistrationReject(const nas::RegistrationReject &msg
                 // state 5GMM-REGISTERED.ATTEMPTING-REGISTRATION-UPDATE."
                 switchUState(E5UState::U2_NOT_UPDATED);
                 resetRegAttemptCounter();
-                switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
+                switchMmState(EMmSubState::MM_REGISTERED_ATTEMPTING_REGISTRATION_UPDATE);
             }
 
             m_timers->t3346.stop();
