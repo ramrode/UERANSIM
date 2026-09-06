@@ -13,10 +13,13 @@
 #include <memory>
 #include <set>
 #include <stdexcept>
+#include <vector>
 #include <gnb/gtp/task.hpp>
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowItem.h>
 #include <asn/ngap/ASN_NGAP_AssociatedQosFlowList.h>
+#include <asn/ngap/ASN_NGAP_Dynamic5QIDescriptor.h>
 #include <asn/ngap/ASN_NGAP_GTPTunnel.h>
+#include <asn/ngap/ASN_NGAP_NonDynamic5QIDescriptor.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceFailedToSetupItemSURes.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceReleaseCommand.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceReleaseResponse.h>
@@ -31,13 +34,49 @@
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceSetupUnsuccessfulTransfer.h>
 #include <asn/ngap/ASN_NGAP_PDUSessionResourceToReleaseItemRelCmd.h>
 #include <asn/ngap/ASN_NGAP_ProtocolIE-Field.h>
+#include <asn/ngap/ASN_NGAP_QosCharacteristics.h>
+#include <asn/ngap/ASN_NGAP_QosFlowLevelQosParameters.h>
+#include <asn/ngap/ASN_NGAP_QosFlowListWithCause.h>
 #include <asn/ngap/ASN_NGAP_QosFlowPerTNLInformationItem.h>
 #include <asn/ngap/ASN_NGAP_QosFlowPerTNLInformationList.h>
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestItem.h>
 #include <asn/ngap/ASN_NGAP_QosFlowSetupRequestList.h>
+#include <asn/ngap/ASN_NGAP_QosFlowWithCauseItem.h>
 
 namespace nr::gnb
 {
+
+// Tells if the given standardised 5QI value is mapped to a GBR or to a delay critical GBR resource type.
+// (See 3GPP TS 23.501, Table 5.7.4-1)
+static bool IsGbrFiveQi(int64_t fiveQi)
+{
+    return (fiveQi >= 1 && fiveQi <= 4) || (fiveQi >= 65 && fiveQi <= 67) || (fiveQi >= 71 && fiveQi <= 76) ||
+           (fiveQi >= 82 && fiveQi <= 85);
+}
+
+// Tells if the QoS flow described by the given QoS Flow Level QoS Parameters IE is a GBR QoS flow. For a dynamic
+// 5QI, the Delay Critical and the Averaging Window IEs are signalled only for the GBR QoS flows.
+// (See 3GPP TS 38.413, 9.3.1.12 and 9.3.1.19)
+static bool IsGbrQosFlow(const ASN_NGAP_QosFlowLevelQosParameters &qosParameters)
+{
+    const auto &characteristics = qosParameters.qosCharacteristics;
+
+    if (characteristics.present == ASN_NGAP_QosCharacteristics_PR_nonDynamic5QI)
+        return characteristics.choice.nonDynamic5QI != nullptr &&
+               IsGbrFiveQi(characteristics.choice.nonDynamic5QI->fiveQI);
+
+    if (characteristics.present == ASN_NGAP_QosCharacteristics_PR_dynamic5QI)
+    {
+        const auto *descriptor = characteristics.choice.dynamic5QI;
+        if (descriptor == nullptr)
+            return false;
+        if (descriptor->delayCritical != nullptr || descriptor->averagingWindow != nullptr)
+            return true;
+        return descriptor->fiveQI != nullptr && IsGbrFiveQi(*descriptor->fiveQI);
+    }
+
+    return false;
+}
 
 void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSessionResourceSetupRequest *msg)
 {
@@ -74,6 +113,7 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
         auto &list = ieList->PDUSessionResourceSetupListSUReq.list;
 
         std::map<int, int> psiCounts{};
+        std::set<int> reportedDuplicates{};
 
         for (int i = 0; i < list.count; i++)
         {
@@ -94,8 +134,13 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
 
             if (psiCounts[psi] > 1)
             {
-                m_logger->err("PDU session resource setup failed: duplicate PDU Session ID[%d] in setup request", psi);
-                addFailedItem(psi, NgapCause::RadioNetwork_multiple_PDU_session_ID_instances);
+                // The duplicated instances identify a single PDU session, therefore it is reported only once
+                if (reportedDuplicates.insert(psi).second)
+                {
+                    m_logger->err("PDU session resource setup failed: duplicate PDU Session ID[%d] in setup request",
+                                  psi);
+                    addFailedItem(psi, NgapCause::RadioNetwork_multiple_PDU_session_ID_instances);
+                }
                 continue;
             }
 
@@ -117,7 +162,9 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
             }
 
             auto resource = std::make_unique<PduSessionResource>(ue->ctxId, psi);
+
             auto *ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_PDUSessionAggregateMaximumBitRate);
+            bool sessionAmbrPresent = ie != nullptr;
             if (ie)
             {
                 resource->sessionAmbr.dlAmbr =
@@ -146,13 +193,52 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                     asn::GetOctetString(ie->UPTransportLayerInformation.choice.gTPTunnel->transportLayerAddress);
             }
 
+            std::vector<int> failedQosFlows{};
+            bool nonGbrQosFlowPresent = false;
+
             ie = asn::ngap::GetProtocolIe(transfer, ASN_NGAP_ProtocolIE_ID_id_QosFlowSetupRequestList);
             if (ie)
             {
+                auto &requestedFlows = ie->QosFlowSetupRequestList.list;
                 auto *ptr = asn::New<ASN_NGAP_QosFlowSetupRequestList>();
-                asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestList, ie->QosFlowSetupRequestList, ptr);
+
+                for (int iQos = 0; iQos < requestedFlows.count; iQos++)
+                {
+                    auto *qosFlow = requestedFlows.array[iQos];
+                    if (qosFlow == nullptr)
+                        continue;
+
+                    int qfi = static_cast<int>(qosFlow->qosFlowIdentifier);
+                    bool isGbrQosFlow = IsGbrQosFlow(qosFlow->qosFlowLevelQosParameters);
+
+                    if (isGbrQosFlow && qosFlow->qosFlowLevelQosParameters.gBR_QosInformation == nullptr)
+                    {
+                        m_logger->err("QoS flow[%d] of PDU session[%d] could not setup: GBR QoS information is missing "
+                                      "for a GBR QoS flow",
+                                      qfi, psi);
+                        failedQosFlows.push_back(qfi);
+                        continue;
+                    }
+
+                    if (!isGbrQosFlow)
+                        nonGbrQosFlowPresent = true;
+
+                    auto *qosFlowCopy = asn::New<ASN_NGAP_QosFlowSetupRequestItem>();
+                    asn::DeepCopy(asn_DEF_ASN_NGAP_QosFlowSetupRequestItem, *qosFlow, qosFlowCopy);
+                    asn::SequenceAdd(*ptr, qosFlowCopy);
+                }
 
                 resource->qosFlows = asn::WrapUnique(ptr, asn_DEF_ASN_NGAP_QosFlowSetupRequestList);
+            }
+
+            if (nonGbrQosFlowPresent && !sessionAmbrPresent)
+            {
+                m_logger->err("PDU session resource setup failed: PDU session AMBR is missing for PDU Session ID[%d] "
+                              "having Non-GBR QoS flow(s)",
+                              psi);
+                addFailedItem(psi, NgapCause::Protocol_semantic_error);
+                asn::Free(asn_DEF_ASN_NGAP_PDUSessionResourceSetupRequestTransfer, transfer);
+                continue;
             }
 
             auto *resourcePtr = resource.get();
@@ -177,6 +263,19 @@ void NgapTask::receiveSessionResourceSetupRequest(int amfId, ASN_NGAP_PDUSession
                     auto *associatedQosFlowItem = asn::New<ASN_NGAP_AssociatedQosFlowItem>();
                     associatedQosFlowItem->qosFlowIdentifier = qosList.array[iQos]->qosFlowIdentifier;
                     asn::SequenceAdd(tr->dLQosFlowPerTNLInformation.associatedQosFlowList, associatedQosFlowItem);
+                }
+
+                if (!failedQosFlows.empty())
+                {
+                    tr->qosFlowFailedToSetupList = asn::New<ASN_NGAP_QosFlowListWithCause>();
+
+                    for (int qfi : failedQosFlows)
+                    {
+                        auto *failedQosFlowItem = asn::New<ASN_NGAP_QosFlowWithCauseItem>();
+                        failedQosFlowItem->qosFlowIdentifier = qfi;
+                        ngap_utils::ToCauseAsn_Ref(NgapCause::Protocol_semantic_error, failedQosFlowItem->cause);
+                        asn::SequenceAdd(*tr->qosFlowFailedToSetupList, failedQosFlowItem);
+                    }
                 }
 
                 auto &upInfo = tr->dLQosFlowPerTNLInformation.uPTransportLayerInformation;
