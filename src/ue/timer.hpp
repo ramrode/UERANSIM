@@ -31,6 +31,7 @@ class UeTimer
     void start(bool clearExpiryCount = true);
     void start(const nas::IEGprsTimer2 &v, bool clearExpiryCount = true);
     void start(const nas::IEGprsTimer3 &v, bool clearExpiryCount = true);
+    void setInterval(const nas::IEGprsTimer3 &v);
     void stop(bool clearExpiryCount = true);
     void resetExpiryCount();
     bool performTick();

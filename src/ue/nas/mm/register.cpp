@@ -338,6 +338,12 @@ void NasMm::receiveInitialRegistrationAccept(const nas::RegistrationAccept &msg)
     switchMmState(EMmSubState::MM_REGISTERED_NORMAL_SERVICE);
     switchUState(E5UState::U1_UPDATED);
 
+    // If the REGISTRATION ACCEPT message included a T3512 value IE, the UE shall use the value in the T3512 value IE as
+    // periodic registration update timer (T3512). The timer is not started here; it is started when the UE enters
+    // 5GMM-IDLE mode. See NasMm::onSwitchCmState.
+    if (msg.t3512Value.has_value() && nas::utils::HasValue(*msg.t3512Value))
+        m_timers->t3512.setInterval(*msg.t3512Value);
+
     // Registration complete is sent conditionally
     bool sendComplete = false;
 
@@ -480,6 +486,13 @@ void NasMm::receiveMobilityRegistrationAccept(const nas::RegistrationAccept &msg
     m_serCounter = 0;
     switchMmState(EMmSubState::MM_REGISTERED_NORMAL_SERVICE);
     switchUState(E5UState::U1_UPDATED);
+
+    // "If the ACCEPT message included a T3512 value IE, the UE shall use the value in T3512 value IE as
+    // periodic registration update timer (T3512). If the T3512 value IE is not included, the UE shall use the value
+    // currently stored, e.g. from a prior REGISTRATION ACCEPT message."
+    // The timer is not started here; it is started when the UE enters 5GMM-IDLE mode. See NasMm::onSwitchCmState.
+    if (msg.t3512Value.has_value() && nas::utils::HasValue(*msg.t3512Value))
+        m_timers->t3512.setInterval(*msg.t3512Value);
 
     // Registration complete is sent conditionally
     bool sendComplete = false;
@@ -715,7 +728,11 @@ void NasMm::receiveInitialRegistrationReject(const nas::RegistrationReject &msg)
         {
             if (msg.t3346value.has_value() && nas::utils::HasValue(*msg.t3346value))
             {
+                // "The UE shall abort the initial registration procedure, set the 5GS update status to 5U2 NOT
+                // UPDATED, reset the registration attempt counter and enter state
+                // 5GMM-DEREGISTERED.ATTEMPTING-REGISTRATION."
                 switchUState(E5UState::U2_NOT_UPDATED);
+                resetRegAttemptCounter();
                 switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
 
                 m_timers->t3346.stop();
@@ -883,8 +900,12 @@ void NasMm::receiveMobilityRegistrationReject(const nas::RegistrationReject &msg
         {
             if (!hasEmergency())
             {
+                // "If the rejected request was not for initiating an emergency PDU session, the UE shall set the
+                // 5GS update status to 5U2 NOT UPDATED, reset the registration attempt counter and change to
+                // state 5GMM-REGISTERED.ATTEMPTING-REGISTRATION-UPDATE."
                 switchUState(E5UState::U2_NOT_UPDATED);
-                switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
+                resetRegAttemptCounter();
+                switchMmState(EMmSubState::MM_REGISTERED_ATTEMPTING_REGISTRATION_UPDATE);
             }
 
             m_timers->t3346.stop();
