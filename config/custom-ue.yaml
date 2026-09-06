@@ -6,9 +6,11 @@ mcc: '286'
 mnc: '01'
 # SUCI Protection Scheme : 0 for Null-scheme, 1 for Profile A and 2 for Profile B
 protectionScheme: 0
-# Home Network Public Key for protecting with SUCI Profile A
+# Home Network Public Key for protecting with SUCI
+# Profile A: 64 hex characters, a 32 byte X25519 public key
+# Profile B: 66 hex characters compressed, or 130 uncompressed, a secp256r1 public key
 homeNetworkPublicKey: '5a8d38864820197c3394b92613b20b91633cbd897119273bf8e4a6f4eec0a650'
-# Home Network Public Key ID for protecting with SUCI Profile A
+# Home Network Public Key ID for protecting with SUCI Profile A or B
 homeNetworkPublicKeyId: 1
 # Routing Indicator
 routingIndicator: '0000'

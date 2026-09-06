@@ -64,12 +64,13 @@ void run_ecies_soft_fail_tests()
         TEST_ASSERT(result.empty(), "soft-fail: off-curve 65-byte uncompressed key returns empty");
     }
 
-    // (f) 64-byte raw X||Y key that is not on the curve (same point as (e), without the prefix)
+    // (f) A raw 64-byte X||Y point, i.e. the C.4 key with the 0x04 prefix stripped. Only the two
+    //     encodings the config accepts are supported, so this is rejected on length alone.
     {
-        OctetString offCurveRaw =
+        OctetString rawPoint =
             OctetString::FromHex("72DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD1"
-                                 "5A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B5");
-        std::string result = eciesProfileB(msin, offCurveRaw, ephPriv);
-        TEST_ASSERT(result.empty(), "soft-fail: off-curve 64-byte raw key returns empty");
+                                 "5A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B4");
+        std::string result = eciesProfileB(msin, rawPoint, ephPriv);
+        TEST_ASSERT(result.empty(), "soft-fail: raw 64-byte point without a prefix returns empty");
     }
 }

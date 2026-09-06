@@ -11,8 +11,6 @@
 #include <fstream>
 #include <lib/nas/base.hpp>
 #include <utils/common.hpp>
-// STEPHANE
-#include <iostream>
 
 namespace nr::ue
 {
