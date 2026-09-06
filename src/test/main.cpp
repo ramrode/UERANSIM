@@ -12,9 +12,9 @@ extern void run_micro_ecc_tests();
 extern void run_ecies_profile_b_tests();
 extern void run_ecies_profile_b_vector_test();
 extern void run_ecies_profile_b_structural_test();
-extern void run_hn_key_bounds_tests();
 extern void run_ecies_soft_fail_tests();
 extern void run_regression_tests();
+extern void run_priv_key_range_tests();
 
 int main()
 {
@@ -25,9 +25,9 @@ int main()
     run_ecies_profile_b_tests();
     run_ecies_profile_b_vector_test();
     run_ecies_profile_b_structural_test();
-    run_hn_key_bounds_tests();
     run_ecies_soft_fail_tests();
     run_regression_tests();
+    run_priv_key_range_tests();
 
     return test_summary();
 }

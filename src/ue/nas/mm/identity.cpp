@@ -8,6 +8,7 @@
 
 #include "ecies_profile_b.hpp"
 #include "mm.hpp"
+#include <fstream>
 #include <lib/nas/base.hpp>
 #include <utils/common.hpp>
 // STEPHANE
@@ -186,20 +187,49 @@ std::string NasMm::generateSUCIProfileA(const std::string &imsi, const OctetStri
     return schemeOutput.toHexString();
 }
 
+// Fills the buffer from the system CSPRNG. Returns false when that source is unavailable, so
+// callers can fail closed instead of falling back to a predictable generator.
+static bool SecureRandomBytes(uint8_t *out, size_t length)
+{
+    std::ifstream urandom{"/dev/urandom", std::ios::binary};
+    if (!urandom.is_open())
+        return false;
+
+    urandom.read(reinterpret_cast<char *>(out), static_cast<std::streamsize>(length));
+    return urandom.gcount() == static_cast<std::streamsize>(length);
+}
+
 std::string NasMm::generateSUCIProfileB(const std::string &imsiPart, const OctetString &hnPublicKey)
 {
-    // Generate 32-byte ephemeral private key locally (mirror Profile A seeding)
-    std::string name("Seed for secp256r1 generation");
-    std::string seed;
-    Random rnd = Random::Mixed(name);
-    int intLength = sizeof(int32_t);
+    // The ephemeral key is the only thing keeping the SUPI concealed, so it must come from a
+    // cryptographic source. The `Random` class used by Profile A is a 64-bit time seeded LCG,
+    // which would let anyone who observes the SUCI recover the SUPI.
+    uint8_t privKeyBuffer[32];
+    OctetString ephemeralPrivKey;
 
-    for (int i = 0; i < (32 / intLength); i++)
+    // A draw outside [1, n-1] is rejected by uECC_compute_public_key(); redraw instead of
+    // failing the registration. The odds of needing a second attempt are about 2^-32.
+    for (int attempt = 0; attempt < 8; attempt++)
     {
-        seed = seed + utils::IntToHex(rnd.nextI());
+        if (!SecureRandomBytes(privKeyBuffer, sizeof(privKeyBuffer)))
+        {
+            m_logger->err("SUCI Profile B: no cryptographic random source available");
+            return {};
+        }
+
+        OctetString candidate = OctetString::FromArray(privKeyBuffer, sizeof(privKeyBuffer));
+        if (isValidProfileBPrivateKey(candidate))
+        {
+            ephemeralPrivKey = std::move(candidate);
+            break;
+        }
     }
 
-    OctetString ephemeralPrivKey = OctetString::FromHex(seed);
+    if (ephemeralPrivKey.length() != 32)
+    {
+        m_logger->err("SUCI Profile B: could not generate a valid ephemeral private key");
+        return {};
+    }
 
     // BCD-encode MSIN (same as Profile A)
     OctetString msin;

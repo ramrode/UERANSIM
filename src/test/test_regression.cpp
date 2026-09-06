@@ -7,6 +7,7 @@
 //
 
 #include "test_util.hpp"
+#include <cstring>
 #include <lib/nas/ie6.hpp>
 #include <utils/octet_string.hpp>
 
@@ -23,8 +24,8 @@ void run_regression_tests()
         ie.imsi.routingIndicator = "1234";
         ie.imsi.protectionSchemaId = 2; // Profile B
         ie.imsi.homeNetworkPublicKeyIdentifier = 27;
-        ie.imsi.schemeOutput = "039aab8376597021e855679a9778ea0b67396e68c66df32c0f41e9acca2da9b9d1"
-                               "46a21f4297e43b1f2f7cff7936";
+        ie.imsi.schemeOutput = "039AAB8376597021E855679A9778EA0B67396E68C66DF32C0F41E9ACCA2DA9B9D1"
+                               "46A21F4297E43B1F2F7CFF7936";
 
         OctetString encoded;
         nas::IE5gsMobileIdentity::Encode(ie, encoded);
@@ -34,6 +35,19 @@ void run_regression_tests()
         int schemeOutputBytes = static_cast<int>(ie.imsi.schemeOutput.size()) / 2;
         int expectedLen = 1 + 3 + 2 + 1 + 1 + schemeOutputBytes;
         TEST_ASSERT_EQ(encoded.length(), expectedLen);
+
+        // The scheme output is hex, and OctetString::FromHex takes either case, so the case the
+        // generator happens to emit must not reach the wire.
+        nas::IE5gsMobileIdentity lowerIe = ie;
+        lowerIe.imsi.schemeOutput = "039aab8376597021e855679a9778ea0b67396e68c66df32c0f41e9acca2da9b9d1"
+                                    "46a21f4297e43b1f2f7cff7936";
+
+        OctetString lowerEncoded;
+        nas::IE5gsMobileIdentity::Encode(lowerIe, lowerEncoded);
+
+        TEST_ASSERT_EQ(lowerEncoded.length(), encoded.length());
+        TEST_ASSERT(std::memcmp(encoded.data(), lowerEncoded.data(), static_cast<size_t>(encoded.length())) == 0,
+                    "regression: scheme output hex case does not change the encoded bytes");
     }
 
     // --- Test 2: Profile A structural — output hex length and scheme id ---

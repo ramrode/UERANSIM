@@ -52,4 +52,24 @@ void run_ecies_soft_fail_tests()
         std::string result = eciesProfileB(msin, badUncompressedKey, ephPriv);
         TEST_ASSERT(result.empty(), "soft-fail: 65-byte key with invalid prefix 0x03 returns empty");
     }
+
+    // (e) 65-byte uncompressed key with the correct 0x04 prefix but an off-curve point.
+    //     This is the C.4 home network public key with the last byte of Y flipped (B4 -> B5).
+    {
+        OctetString offCurveUncompressed =
+            OctetString::FromHex("04"
+                                 "72DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD1"
+                                 "5A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B5");
+        std::string result = eciesProfileB(msin, offCurveUncompressed, ephPriv);
+        TEST_ASSERT(result.empty(), "soft-fail: off-curve 65-byte uncompressed key returns empty");
+    }
+
+    // (f) 64-byte raw X||Y key that is not on the curve (same point as (e), without the prefix)
+    {
+        OctetString offCurveRaw =
+            OctetString::FromHex("72DA71976234CE833A6907425867B82E074D44EF907DFB4B3E21C1C2256EBCD1"
+                                 "5A7DED52FCBB097A4ED250E036C7B9C8C7004C4EEDC4F068CD7BF8D3F900E3B5");
+        std::string result = eciesProfileB(msin, offCurveRaw, ephPriv);
+        TEST_ASSERT(result.empty(), "soft-fail: off-curve 64-byte raw key returns empty");
+    }
 }
