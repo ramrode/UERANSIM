@@ -27,47 +27,60 @@
 namespace nr::gnb
 {
 
-int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
-    nas::RegistrationRequest *regRequest = nullptr;
-    int32_t requestedSliceType = -1;
-    const uint8_t *m_data = nasPdu.data();
-    size_t m_dataLength = nasPdu.length(); 
-    OctetView octetView(m_data, m_dataLength);
-    auto nasMessage = nas::DecodeNasMessage(octetView);  
-    if (nasMessage->epd == nas::EExtendedProtocolDiscriminator::MOBILITY_MANAGEMENT_MESSAGES)
-    {
-        nas::MmMessage *mmMessage = dynamic_cast<nas::MmMessage *>(nasMessage.get());
-        if (mmMessage)
-        {
-            nas::PlainMmMessage *plainMmMessage = dynamic_cast<nas::PlainMmMessage *>(mmMessage);
-            if (plainMmMessage)
-            {
-                regRequest = dynamic_cast<nas::RegistrationRequest *>(plainMmMessage);
-                if (regRequest && regRequest->requestedNSSAI.has_value())
-                {
-                    auto sz = regRequest->requestedNSSAI->sNssais.size();
-                    if (sz > 0) {
-                        requestedSliceType = static_cast<uint8_t>(regRequest->requestedNSSAI->sNssais[0].sst);
-                    }
-                }
-            }
-        }
-    }
-    // Re-encode only when the PDU was actually changed. Every Initial NAS message used
-    // to be decoded and re-encoded here, including integrity-protected ones: a Service
-    // Request answering a Paging carries a MAC, a decode/re-encode round trip is not
-    // byte-exact, and the AMF then reports "NAS MAC verification failed", finds no
-    // usable security context, and answers Service Reject -- which deregisters the UE.
-    // A plain initial Registration Request has no MAC, which is why registration
-    // survived this and mobile-terminated reachability did not.
-    if (regRequest && regRequest->requestedNSSAI.has_value())
-    {
-        regRequest->requestedNSSAI = std::nullopt;
+// Reads the requested NSSAI out of an Initial NAS message so that an AMF can be selected
+// for it, and strips that IE from the PDU.
+//
+// The PDU is re-encoded only when the requested NSSAI was actually removed. A decode /
+// re-encode round trip is not lossless: IEUeSecurityCapability::Decode accepts the 1..8
+// octet forms TS 24.501 allows, while Encode always writes 4, so a UE sending the 2-octet
+// form would have that IE silently rewritten here. The AMF replays it in the Security Mode
+// Command and the UE compares it against what it sent, so rewriting a PDU the gNB did not
+// otherwise change can only break it.
+//
+// Only a plain Registration Request can carry a requested NSSAI, so anything with a
+// security header is passed through without being decoded at all. That keeps a Service
+// Request answering a Paging, and any security-protected re-registration, off the decoder.
+int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu, Logger &logger)
+{
+    // Extended protocol discriminator and security header type. Anything shorter than
+    // that is not a NAS message this can inspect.
+    if (nasPdu.length() < 2)
+        return -1;
 
-        OctetString modifiedNasPdu;
-        nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
-        nasPdu = std::move(modifiedNasPdu);
+    if (nasPdu.data()[0] !=
+            static_cast<uint8_t>(nas::EExtendedProtocolDiscriminator::MOBILITY_MANAGEMENT_MESSAGES) ||
+        nasPdu.data()[1] != static_cast<uint8_t>(nas::ESecurityHeaderType::NOT_PROTECTED))
+        return -1;
+
+    std::unique_ptr<nas::NasMessage> nasMessage;
+    try
+    {
+        OctetView octetView(nasPdu.data(), static_cast<size_t>(nasPdu.length()));
+        nasMessage = nas::DecodeNasMessage(octetView);
     }
+    catch (const std::exception &e)
+    {
+        // DecodeNasMessage throws on a message type or an IEI it does not model. Nothing
+        // in this task catches it and NtsTask runs onLoop on a bare thread, so letting it
+        // escape would terminate the gNB. Forward the PDU untouched instead and let the
+        // AMF decide what to make of it.
+        logger.debug("Initial NAS message could not be decoded for AMF selection: %s", e.what());
+        return -1;
+    }
+
+    auto *regRequest = dynamic_cast<nas::RegistrationRequest *>(nasMessage.get());
+    if (regRequest == nullptr || !regRequest->requestedNSSAI.has_value())
+        return -1;
+
+    int32_t requestedSliceType = -1;
+    if (!regRequest->requestedNSSAI->sNssais.empty())
+        requestedSliceType = static_cast<int32_t>(regRequest->requestedNSSAI->sNssais[0].sst);
+
+    regRequest->requestedNSSAI = std::nullopt;
+
+    OctetString modifiedNasPdu;
+    nas::EncodeNasMessage(*nasMessage, modifiedNasPdu);
+    nasPdu = std::move(modifiedNasPdu);
 
     return requestedSliceType;
 }
@@ -75,7 +88,7 @@ int32_t extractSliceInfoAndModifyPdu(OctetString &nasPdu) {
 void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t rrcEstablishmentCause,
                                             const std::optional<GutiMobileIdentity> &sTmsi)
 {
-    int32_t requestedSliceType = extractSliceInfoAndModifyPdu(nasPdu);
+    int32_t requestedSliceType = extractSliceInfoAndModifyPdu(nasPdu, *m_logger);
 
     m_logger->debug("Initial NAS message received from UE[%d]", ueId);
 
@@ -90,13 +103,21 @@ void NgapTask::handleInitialNasTransport(int ueId, OctetString &nasPdu, int64_t 
     auto *ueCtx = findUeContext(ueId);
     if (ueCtx == nullptr)
         return;
+
+    // No InitialUEMessage is sent from here on, so the AMF will never ask for this context
+    // to be released. Drop it right away, otherwise it lives until the gNB exits and its
+    // id keeps every later Initial NAS message for the same UE from being handled.
     auto *amfCtx = findAmfContext(ueCtx->associatedAmfId);
     if (amfCtx == nullptr)
+    {
+        deleteUeContext(ueId);
         return;
+    }
 
     if (amfCtx->state != EAmfState::CONNECTED)
     {
         m_logger->err("Initial NAS transport failure. AMF is not in connected state.");
+        deleteUeContext(ueId);
         return;
     }
 

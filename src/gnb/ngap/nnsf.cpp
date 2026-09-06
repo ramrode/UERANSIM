@@ -44,7 +44,7 @@ static bool supportsSlice(const NgapAmfContext *amf, int32_t requestedSliceType)
     return false;
 }
 
-NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t &requestedSliceType,
+NgapAmfContext *NgapTask::selectAmf(int ueId, int32_t requestedSliceType,
                                     const std::optional<GutiMobileIdentity> &sTmsi)
 {
     // Only a Registration Request carries a requested NSSAI, so requestedSliceType is
