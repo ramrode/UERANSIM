@@ -316,7 +316,10 @@ void NasMm::receiveDeregistrationRequest(const nas::DeRegistrationRequestUeTermi
             switchMmState(EMmSubState::MM_DEREGISTERED_ATTEMPTING_REGISTRATION);
 
             if (msg.t3346Value.has_value() && nas::utils::HasValue(*msg.t3346Value))
+            {
                 m_timers->t3346.start(*msg.t3346Value);
+                resetRegAttemptCounter();
+            }
         }
 
         if (cause == nas::EMmCause::N1_MODE_NOT_ALLOWED)
